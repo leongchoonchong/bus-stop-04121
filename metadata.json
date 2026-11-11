@@ -1,0 +1,6 @@
+{
+  "name": "SG Bus Board 04121 & Weather",
+  "description": "Real-time bus arrival board for Singapore bus stop 04121 (Opp The Treasury, North Bridge Rd) with live weather monitoring and flexible backend connectivity.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
