@@ -30,11 +30,11 @@ export default async function handler(req: Request | any, res: Response | any) {
       rainfall: 'https://api-open.data.gov.sg/v2/real-time/api/rainfall',
     },
     targetStop: {
-      busStopCode: '04121',
-      description: 'Opp The Treasury',
-      roadName: 'North Bridge Rd',
+      busStopCode: String(req.query?.busStopCode || '04179'),
+      description: String(req.query?.description || 'Aft City Hall Stn Exit B'),
+      roadName: String(req.query?.roadName || 'North Bridge Rd'),
       sector: 'City',
-      coordinates: { latitude: 1.2902, longitude: 103.8502 },
+      coordinates: { latitude: 1.2925, longitude: 103.8518 },
     },
   };
 

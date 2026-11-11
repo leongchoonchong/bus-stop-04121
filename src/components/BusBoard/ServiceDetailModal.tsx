@@ -5,12 +5,16 @@ import { formatEta } from '../../services/busService';
 
 interface ServiceDetailModalProps {
   service: BusServiceArrival | null;
+  currentStopCode?: string;
+  currentStopDesc?: string;
   onClose: () => void;
   onToggleStar: (serviceNo: string) => void;
 }
 
 export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
   service,
+  currentStopCode = '04179',
+  currentStopDesc = 'Aft City Hall Stn Exit B',
   onClose,
   onToggleStar,
 }) => {
@@ -60,7 +64,7 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
                 </h3>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Calling at Stop 04121 (Opp The Treasury)
+                Calling at Stop {currentStopCode} ({currentStopDesc})
               </p>
             </div>
           </div>

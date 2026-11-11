@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { BackendConfig, BusServiceArrival, WeatherData } from './types/transit';
-import { BUS_STOP_04121, fetchArrivalsFromCustomBackend, formatEta, getSimulatedArrivals } from './services/busService';
+import { BackendConfig, BusServiceArrival, BusStopInfo, WeatherData } from './types/transit';
+import {
+  DEFAULT_BUS_STOP_CODE,
+  fetchArrivalsFromCustomBackend,
+  formatEta,
+  getSimulatedArrivals,
+  resolveBusStop,
+} from './services/busService';
 import { fetchCivicDistrictWeather } from './services/weatherService';
 import { TopNavigation } from './components/Navigation/TopNavigation';
 import { WeatherCard } from './components/Weather/WeatherCard';
@@ -13,13 +19,14 @@ import { StopGuideView } from './components/StopGuide/StopGuideView';
 import { ApiDocsView } from './components/Docs/ApiDocsView';
 import { AlertCircle, Bus, CheckCircle2, Clock, Info, Layers, Sparkles, Star, Users } from 'lucide-react';
 
-const LOCAL_STORAGE_KEY_CONFIG = 'sg_transit_04121_config';
-const LOCAL_STORAGE_KEY_STARRED = 'sg_transit_04121_starred';
-const LOCAL_STORAGE_KEY_THEME = 'sg_transit_04121_theme';
+const LOCAL_STORAGE_KEY_CURRENT_STOP = 'sg_transit_current_bus_stop';
+const LOCAL_STORAGE_KEY_CONFIG = 'sg_transit_config';
+const LOCAL_STORAGE_KEY_STARRED = 'sg_transit_starred';
+const LOCAL_STORAGE_KEY_THEME = 'sg_transit_theme';
 
 const DEFAULT_CONFIG: BackendConfig = {
   mode: 'simulator',
-  customBusUrl: '/api/bus/04121',
+  customBusUrl: '/api/bus/:busStopCode',
   customWeatherUrl: '',
   headersJson: '',
   autoRefreshInterval: 30,
@@ -46,7 +53,17 @@ export default function App() {
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  // Backend config
+  // Bus Stop Number State: Default to 04179 (Aft City Hall Stn Exit B)
+  const [currentBusStopCode, setCurrentBusStopCode] = useState<string>(() => {
+    return localStorage.getItem(LOCAL_STORAGE_KEY_CURRENT_STOP) || DEFAULT_BUS_STOP_CODE;
+  });
+
+  // Current Bus Stop Info derived dynamically from user input
+  const currentStopInfo = useMemo<BusStopInfo>(() => {
+    return resolveBusStop(currentBusStopCode);
+  }, [currentBusStopCode]);
+
+  // Backend configuration state
   const [backendConfig, setBackendConfig] = useState<BackendConfig>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY_CONFIG);
@@ -56,13 +73,13 @@ export default function App() {
     }
   });
 
-  // Starred services (defaults to key services 51, 63, 145, 851)
+  // Starred services (defaults to key commuter services)
   const [starredServices, setStarredServices] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY_STARRED);
-      return saved ? JSON.parse(saved) : ['51', '63', '145', '851'];
+      return saved ? JSON.parse(saved) : ['32', '51', '63', '145', '851'];
     } catch {
-      return ['51', '63', '145', '851'];
+      return ['32', '51', '63', '145', '851'];
     }
   });
 
@@ -76,7 +93,7 @@ export default function App() {
     });
   }, []);
 
-  // UI state
+  // UI Navigation & filter states
   const [activeTab, setActiveTab] = useState<'arrivals' | 'weather' | 'stops' | 'docs'>('arrivals');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState<'all' | 'starred' | 'dd' | 'arriving'>('all');
@@ -85,37 +102,39 @@ export default function App() {
   const [isBackendModalOpen, setIsBackendModalOpen] = useState(false);
 
   // Data states
-  const [services, setServices] = useState<BusServiceArrival[]>(() => getSimulatedArrivals(starredServices));
+  const [services, setServices] = useState<BusServiceArrival[]>(() =>
+    getSimulatedArrivals(DEFAULT_BUS_STOP_CODE, starredServices)
+  );
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
   const [refreshCountdown, setRefreshCountdown] = useState(30);
 
-  // Load weather
-  const loadWeather = useCallback(async () => {
+  // Load weather dynamically for current stop coordinates & sector
+  const loadWeather = useCallback(async (stop: BusStopInfo = currentStopInfo) => {
     setWeatherLoading(true);
     try {
-      const data = await fetchCivicDistrictWeather(backendConfig.customWeatherUrl);
+      const data = await fetchCivicDistrictWeather(stop, backendConfig.customWeatherUrl);
       setWeather(data);
     } catch (err: any) {
       console.error('Weather load error:', err);
     } finally {
       setWeatherLoading(false);
     }
-  }, [backendConfig.customWeatherUrl]);
+  }, [backendConfig.customWeatherUrl, currentStopInfo]);
 
-  // Load bus arrivals
-  const loadArrivals = useCallback(async () => {
+  // Load bus arrivals for current bus stop code
+  const loadArrivals = useCallback(async (stopCode: string = currentBusStopCode) => {
     setIsRefreshing(true);
     setErrorNotice(null);
 
     try {
       if (backendConfig.mode === 'custom_api') {
-        const data = await fetchArrivalsFromCustomBackend(backendConfig, starredServices);
+        const data = await fetchArrivalsFromCustomBackend(stopCode, backendConfig, starredServices);
         setServices(data);
       } else {
-        const data = getSimulatedArrivals(starredServices);
+        const data = getSimulatedArrivals(stopCode, starredServices);
         setServices(data);
       }
     } catch (err: any) {
@@ -123,27 +142,38 @@ export default function App() {
       setErrorNotice(
         `Failed to reach custom backend (${err.message || 'Network Error'}). Falling back to simulated live transit data.`
       );
-      // Fallback to simulation so UI never breaks
-      const data = getSimulatedArrivals(starredServices);
+      const data = getSimulatedArrivals(stopCode, starredServices);
       setServices(data);
     } finally {
       setIsRefreshing(false);
       setRefreshCountdown(backendConfig.autoRefreshInterval || 30);
     }
-  }, [backendConfig, starredServices]);
+  }, [backendConfig, currentBusStopCode, starredServices]);
+
+  // Handle User Input change of bus stop code
+  const handleBusStopChange = useCallback((newCode: string) => {
+    const clean = newCode.trim();
+    if (!clean) return;
+    setCurrentBusStopCode(clean);
+    localStorage.setItem(LOCAL_STORAGE_KEY_CURRENT_STOP, clean);
+
+    const resolved = resolveBusStop(clean);
+    loadArrivals(clean);
+    loadWeather(resolved);
+  }, [loadArrivals, loadWeather]);
 
   // Initial load
   useEffect(() => {
-    loadArrivals();
-    loadWeather();
-  }, [loadArrivals, loadWeather]);
+    loadArrivals(currentBusStopCode);
+    loadWeather(currentStopInfo);
+  }, []);
 
   // 1-Second countdown clock for real-time live refresh
   useEffect(() => {
     const timer = setInterval(() => {
       setRefreshCountdown(prev => {
         if (prev <= 1) {
-          loadArrivals();
+          loadArrivals(currentBusStopCode);
           return backendConfig.autoRefreshInterval || 30;
         }
         return prev - 1;
@@ -167,7 +197,7 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [backendConfig.autoRefreshInterval, loadArrivals]);
+  }, [backendConfig.autoRefreshInterval, currentBusStopCode, loadArrivals]);
 
   // Save backend config handler
   const handleSaveBackendConfig = (newConfig: BackendConfig) => {
@@ -179,7 +209,7 @@ export default function App() {
   const filteredServices = useMemo(() => {
     let result = [...services];
 
-    // Search filter
+    // Search filter (service number or destination)
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase().trim();
       result = result.filter(
@@ -203,7 +233,7 @@ export default function App() {
       );
     }
 
-    // Primary sorting: Starred items float to top, then sorted numerically / arrival time
+    // Primary sorting: Starred items float to top, then sorted by arrival time
     result.sort((a, b) => {
       if (a.isStarred && !b.isStarred) return -1;
       if (!a.isStarred && b.isStarred) return 1;
@@ -231,11 +261,12 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors selection:bg-emerald-500/30">
       {/* 3-Zone Top Navigation */}
       <TopNavigation
+        currentStopCode={currentBusStopCode}
         backendConfig={backendConfig}
         onOpenBackendModal={() => setIsBackendModalOpen(true)}
         onRefreshAll={() => {
-          loadArrivals();
-          loadWeather();
+          loadArrivals(currentBusStopCode);
+          loadWeather(currentStopInfo);
         }}
         isRefreshing={isRefreshing || weatherLoading}
         theme={theme}
@@ -267,16 +298,19 @@ export default function App() {
           <div className="space-y-6">
             {/* Top Quick Status Strip */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {/* Stat 1: Total Services */}
+              {/* Stat 1: Current Stop Services */}
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs">
-                <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                  Stop 04121 Services
+                <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                  <span>Stop {currentBusStopCode} Services</span>
+                  {currentBusStopCode === '04179' && (
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">Default</span>
+                  )}
                 </div>
                 <div className="flex items-baseline gap-2 mt-1">
                   <span className="text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
-                    {BUS_STOP_04121.ServicesCount}
+                    {services.length}
                   </span>
-                  <span className="text-xs text-slate-400">Lines Active</span>
+                  <span className="text-xs text-slate-400">Lines Operating</span>
                 </div>
               </div>
 
@@ -306,13 +340,13 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Stat 4: Civic Weather Snapshot */}
+              {/* Stat 4: Dynamic Stop Weather Snapshot */}
               <div
                 onClick={() => setActiveTab('weather')}
                 className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs hover:border-slate-300 dark:hover:border-slate-700 cursor-pointer transition-colors"
               >
                 <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 flex items-center justify-between">
-                  <span>Civic Weather</span>
+                  <span>{currentStopInfo.Sector || 'Local'} Weather</span>
                   <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">View Detail</span>
                 </div>
                 <div className="flex items-baseline gap-2 mt-1">
@@ -326,18 +360,19 @@ export default function App() {
               </div>
             </div>
 
-            {/* Weather Glance Card */}
+            {/* Weather Glance Card (Correlated to current bus stop) */}
             <WeatherCard
               weather={weather}
               isLoading={weatherLoading}
-              onRefresh={loadWeather}
+              onRefresh={() => loadWeather(currentStopInfo)}
               compact={false}
             />
 
-            {/* Bus Board Main Container */}
+            {/* Bus Board Main Container with User-Input Field */}
             <div>
               <BusBoardHeader
-                stopInfo={BUS_STOP_04121}
+                stopInfo={currentStopInfo}
+                onBusStopChange={handleBusStopChange}
                 searchTerm={searchTerm}
                 setSearchTerm={setSearchTerm}
                 activeFilter={activeFilter}
@@ -345,7 +380,10 @@ export default function App() {
                 displayMode={displayMode}
                 setDisplayMode={setDisplayMode}
                 refreshSecondsRemaining={refreshCountdown}
-                onManualRefresh={loadArrivals}
+                onManualRefresh={() => {
+                  loadArrivals(currentBusStopCode);
+                  loadWeather(currentStopInfo);
+                }}
                 isRefreshing={isRefreshing}
                 totalServicesCount={services.length}
                 filteredCount={filteredServices.length}
@@ -372,7 +410,7 @@ export default function App() {
                       No matching bus services
                     </h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-                      No services match your search query "{searchTerm}" or selected filter.
+                      No services match your search query "{searchTerm}" or filter for Stop {currentBusStopCode}.
                     </p>
                     <button
                       onClick={() => {
@@ -389,6 +427,9 @@ export default function App() {
                 /* View 2: High-Contrast LED Electronic Board */
                 <BusLedBoard
                   services={filteredServices}
+                  stopCode={currentBusStopCode}
+                  stopRoad={currentStopInfo.RoadName}
+                  stopSector={currentStopInfo.Sector}
                   onSelectService={setSelectedService}
                   onToggleStar={toggleStar}
                 />
@@ -397,13 +438,13 @@ export default function App() {
           </div>
         )}
 
-        {/* Tab 2: Full Weather View */}
+        {/* Tab 2: Full Weather View for Current Stop Location */}
         {activeTab === 'weather' && (
           <div className="space-y-6">
             <WeatherCard
               weather={weather}
               isLoading={weatherLoading}
-              onRefresh={loadWeather}
+              onRefresh={() => loadWeather(currentStopInfo)}
               compact={false}
             />
 
@@ -411,37 +452,40 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs">
                 <h3 className="font-bold text-slate-900 dark:text-white text-sm mb-2">
-                  Singapore Civic District Microclimate
+                  {currentStopInfo.Description} Weather Telemetry
                 </h3>
                 <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-3">
-                  Located near the Singapore River and Fort Canning Hill, bus stop 04121 (Opp The Treasury) experiences typical tropical microclimates with afternoon convection showers and brisk river breezes.
+                  Targeted at Bus Stop {currentBusStopCode} ({currentStopInfo.RoadName}), retrieving live official Singapore Government NEA sensor feeds from data.gov.sg.
                 </p>
                 <div className="text-xs text-slate-500 space-y-1">
-                  <div>• Open-Meteo GPS Sensor: 1.2902°N, 103.8502°E</div>
-                  <div>• Elevation: 11m above sea level</div>
-                  <div>• Timezone: Asia/Singapore (SGT, UTC+8)</div>
+                  <div>• Stop Coordinates: {currentStopInfo.Latitude}°N, {currentStopInfo.Longitude}°E</div>
+                  <div>• Weather Sector: {currentStopInfo.Sector || 'City'}</div>
+                  <div>• Thermometer Sensor: {weather?.temperatureStation?.name || 'Nearest NEA Station'}</div>
+                  <div>• Rain Gauge: {weather?.rainfallStation?.name || 'Nearest NEA Gauge'}</div>
                 </div>
               </div>
 
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-xs">
                 <h3 className="font-bold text-slate-900 dark:text-white text-sm mb-2">
-                  Rain Shelter Connectivity
+                  Transit Shelter Advisory
                 </h3>
                 <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-3">
-                  If sudden tropical rain occurs, Bus Stop 04121 offers 100% sheltered linkways connecting to:
+                  Bus Stop {currentBusStopCode} is equipped with an official covered shelter and barrier-free access.
                 </p>
                 <ul className="text-xs text-slate-600 dark:text-slate-300 space-y-1">
-                  <li>• Covered overhead bridge into Peninsula Plaza</li>
-                  <li>• Sheltered walkway to City Hall MRT Exit B</li>
-                  <li>• Direct basement link to Funan Mall</li>
+                  <li>• Covered walkway connecting to {currentStopInfo.Landmarks?.[0] || 'nearby transit nodes'}</li>
+                  <li>• Step-free wheelchair boarding ramp</li>
+                  <li>• Electronic arrival board integration</li>
                 </ul>
               </div>
             </div>
           </div>
         )}
 
-        {/* Tab 3: Stop 04121 Metadata Guide */}
-        {activeTab === 'stops' && <StopGuideView />}
+        {/* Tab 3: Dynamic Stop Guide */}
+        {activeTab === 'stops' && (
+          <StopGuideView stopInfo={currentStopInfo} services={filteredServices} />
+        )}
 
         {/* Tab 4: Backend API Docs */}
         {activeTab === 'docs' && <ApiDocsView />}
@@ -451,9 +495,9 @@ export default function App() {
       <footer className="mt-auto border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 py-4 px-6 text-xs text-slate-500 dark:text-slate-400 transition-colors">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-center sm:text-left">
           <div className="flex items-center gap-2">
-            <span>Bus Stop 04121 (Opp The Treasury)</span>
+            <span>Bus Stop {currentBusStopCode} ({currentStopInfo.Description})</span>
             <span aria-hidden="true">·</span>
-            <span>Civic District Transit Monitor</span>
+            <span>Singapore Transit Monitor</span>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -463,7 +507,7 @@ export default function App() {
               {backendConfig.mode === 'simulator' ? 'Simulated Transit Mode' : 'Custom Backend API'}
             </button>
             <span aria-hidden="true">·</span>
-            <span>LTA DataMall & Open-Meteo</span>
+            <span>data.gov.sg & Open-Meteo</span>
           </div>
         </div>
       </footer>
@@ -471,6 +515,8 @@ export default function App() {
       {/* Service Detail Modal */}
       <ServiceDetailModal
         service={selectedService}
+        currentStopCode={currentBusStopCode}
+        currentStopDesc={currentStopInfo.Description}
         onClose={() => setSelectedService(null)}
         onToggleStar={toggleStar}
       />

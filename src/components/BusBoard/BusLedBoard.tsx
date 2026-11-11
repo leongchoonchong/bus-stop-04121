@@ -4,12 +4,18 @@ import { formatEta } from '../../services/busService';
 
 interface BusLedBoardProps {
   services: BusServiceArrival[];
+  stopCode?: string;
+  stopRoad?: string;
+  stopSector?: string;
   onSelectService: (service: BusServiceArrival) => void;
   onToggleStar: (serviceNo: string) => void;
 }
 
 export const BusLedBoard: React.FC<BusLedBoardProps> = ({
   services,
+  stopCode = '04179',
+  stopRoad = 'NORTH BRIDGE RD',
+  stopSector = 'CIVIC DISTRICT',
   onSelectService,
   onToggleStar,
 }) => {
@@ -20,11 +26,11 @@ export const BusLedBoard: React.FC<BusLedBoardProps> = ({
         <div className="flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]"></span>
           <span className="text-emerald-400 font-bold tracking-widest uppercase">
-            BUS ARRIVAL DISPLAY · STOP 04121
+            BUS ARRIVAL DISPLAY · STOP {stopCode}
           </span>
         </div>
-        <div className="text-slate-400 text-[11px] tracking-wider">
-          NORTH BRIDGE RD · CIVIC DISTRICT
+        <div className="text-slate-400 text-[11px] tracking-wider uppercase">
+          {stopRoad} · {stopSector}
         </div>
       </div>
 

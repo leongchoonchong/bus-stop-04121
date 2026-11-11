@@ -1,15 +1,37 @@
 import type { Request, Response } from 'express';
 
-const TARGET_04121 = { lat: 1.2902, lon: 103.8502 };
+const DEFAULT_STOP = {
+  code: '04179',
+  description: 'Aft City Hall Stn Exit B',
+  roadName: 'North Bridge Rd',
+  sector: 'City',
+  lat: 1.2925,
+  lon: 103.8518,
+};
 
 export default async function handler(req: Request | any, res: Response | any) {
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=120');
 
+  // Dynamic parameters based on user-input bus stop
+  const query = req.query || {};
+  const body = req.body || {};
+
+  const busStopCode = String(query.busStopCode || body.busStopCode || DEFAULT_STOP.code);
+  const roadName = String(query.roadName || body.roadName || DEFAULT_STOP.roadName);
+  const description = String(query.description || body.description || DEFAULT_STOP.description);
+  const targetSector = String(query.sector || body.sector || DEFAULT_STOP.sector).toLowerCase();
+
+  const targetLat = parseFloat(String(query.lat || body.lat || DEFAULT_STOP.lat));
+  const targetLon = parseFloat(String(query.lon || body.lon || DEFAULT_STOP.lon));
+
+  const validLat = isNaN(targetLat) ? DEFAULT_STOP.lat : targetLat;
+  const validLon = isNaN(targetLon) ? DEFAULT_STOP.lon : targetLon;
+
   const headers = {
     'Accept': 'application/json',
-    'User-Agent': 'SGBus04121-Weather/1.0',
+    'User-Agent': 'SGBus-Dynamic-Weather/1.0',
   };
 
   try {
@@ -34,15 +56,23 @@ export default async function handler(req: Request | any, res: Response | any) {
       rainRes.ok ? rainRes.json() : null,
     ]);
 
-    // 1. Extract 2-hr forecast for City
+    // 1. Extract 2-hr forecast matching target sector
     const forecastItems = forecastData?.data?.items || [];
     const latestForecastItem = forecastItems[0] || null;
-    const cityForecast = latestForecastItem?.forecasts?.find(
-      (f: { area: string; forecast: string }) => f.area.toLowerCase() === 'city'
-    );
-    const forecastText = cityForecast?.forecast || 'Partly Cloudy';
+    const forecastsList: Array<{ area: string; forecast: string }> = latestForecastItem?.forecasts || [];
 
-    // 2. Extract nearest temperature to Stop 04121
+    // Match exact sector, or area containing sector name, or fallback to 'City'
+    let matchedForecast = forecastsList.find(f => f.area.toLowerCase() === targetSector);
+    if (!matchedForecast) {
+      matchedForecast = forecastsList.find(f => f.area.toLowerCase().includes(targetSector) || targetSector.includes(f.area.toLowerCase()));
+    }
+    if (!matchedForecast) {
+      matchedForecast = forecastsList.find(f => f.area.toLowerCase() === 'city') || forecastsList[0];
+    }
+    const forecastText = matchedForecast?.forecast || 'Partly Cloudy';
+    const sectorLabel = matchedForecast?.area || 'City';
+
+    // 2. Extract nearest temperature to target coordinates
     const tempStations = tempData?.data?.stations || [];
     const latestTempReadings: Array<{ stationId: string; value: number }> =
       tempData?.data?.readings?.[0]?.data || [];
@@ -50,7 +80,7 @@ export default async function handler(req: Request | any, res: Response | any) {
     const sortedTempStations = tempStations
       .map((st: any) => {
         const loc = st.location || {};
-        const dist = Math.hypot((loc.latitude || 0) - TARGET_04121.lat, (loc.longitude || 0) - TARGET_04121.lon);
+        const dist = Math.hypot((loc.latitude || 0) - validLat, (loc.longitude || 0) - validLon);
         const valObj = latestTempReadings.find(r => r.stationId === st.id);
         return {
           id: st.id,
@@ -62,9 +92,9 @@ export default async function handler(req: Request | any, res: Response | any) {
       .filter((s: any) => s.temperature !== null)
       .sort((a: any, b: any) => a.dist - b.dist);
 
-    const nearestTemp = sortedTempStations[0] || { name: 'City Hall area', temperature: 31.0, id: 'S111' };
+    const nearestTemp = sortedTempStations[0] || { name: 'Nearest Station', temperature: 31.0, id: 'S111' };
 
-    // 3. Extract nearest rainfall to Stop 04121
+    // 3. Extract nearest rainfall to target coordinates
     const rainStations = rainData?.data?.stations || [];
     const latestRainReadings: Array<{ stationId: string; value: number }> =
       rainData?.data?.readings?.[0]?.data || [];
@@ -72,7 +102,7 @@ export default async function handler(req: Request | any, res: Response | any) {
     const sortedRainStations = rainStations
       .map((st: any) => {
         const loc = st.location || {};
-        const dist = Math.hypot((loc.latitude || 0) - TARGET_04121.lat, (loc.longitude || 0) - TARGET_04121.lon);
+        const dist = Math.hypot((loc.latitude || 0) - validLat, (loc.longitude || 0) - validLon);
         const valObj = latestRainReadings.find(r => r.stationId === st.id);
         return {
           id: st.id,
@@ -83,13 +113,12 @@ export default async function handler(req: Request | any, res: Response | any) {
       })
       .sort((a: any, b: any) => a.dist - b.dist);
 
-    const nearestRain = sortedRainStations[0] || { name: 'Nicoll Highway', rainfall: 0, id: 'S119' };
+    const nearestRain = sortedRainStations[0] || { name: 'Nearest Gauge', rainfall: 0, id: 'S119' };
 
-    // Estimated humidity & apparent temp based on Singapore typical conditions
     const tempVal = Number(nearestTemp.temperature ?? 31.0);
     const rainVal = Number(nearestRain.rainfall ?? 0);
     const isRaining = rainVal > 0 || forecastText.toLowerCase().includes('rain') || forecastText.toLowerCase().includes('shower');
-    const estimatedHumidity = isRaining ? 85 : 74;
+    const estimatedHumidity = isRaining ? 84 : 73;
     const apparentTemp = Math.round((tempVal + 3.2) * 10) / 10;
 
     return res.status(200).json({
@@ -97,11 +126,11 @@ export default async function handler(req: Request | any, res: Response | any) {
       source: 'data.gov.sg (Official Singapore Government v2 Real-Time APIs)',
       updatedAt: new Date().toISOString(),
       location: {
-        busStopCode: '04121',
-        description: 'Opp The Treasury',
-        roadName: 'North Bridge Rd',
-        sector: 'City',
-        coordinates: TARGET_04121,
+        busStopCode,
+        description,
+        roadName,
+        sector: sectorLabel,
+        coordinates: { lat: validLat, lon: validLon },
       },
       currentWeather: {
         temperature: tempVal,
@@ -109,7 +138,7 @@ export default async function handler(req: Request | any, res: Response | any) {
         conditionText: forecastText,
         humidity: estimatedHumidity,
         precipitation: rainVal,
-        precipitationProbability: isRaining ? 80 : 20,
+        precipitationProbability: isRaining ? 75 : 20,
         windSpeed: 11,
         temperatureStation: {
           id: nearestTemp.id,

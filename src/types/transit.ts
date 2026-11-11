@@ -34,6 +34,8 @@ export interface BusStopInfo {
   Latitude: number;
   Longitude: number;
   ServicesCount: number;
+  Sector?: string;
+  Landmarks?: string[];
 }
 
 export interface WeatherData {

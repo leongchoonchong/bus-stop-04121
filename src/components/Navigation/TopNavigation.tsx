@@ -3,6 +3,7 @@ import { Bus, CloudSun, Code, Moon, Sun, RefreshCw, Radio } from 'lucide-react';
 import { BackendConfig } from '../../types/transit';
 
 interface TopNavigationProps {
+  currentStopCode: string;
   backendConfig: BackendConfig;
   onOpenBackendModal: () => void;
   onRefreshAll: () => void;
@@ -14,6 +15,7 @@ interface TopNavigationProps {
 }
 
 export const TopNavigation: React.FC<TopNavigationProps> = ({
+  currentStopCode,
   backendConfig,
   onOpenBackendModal,
   onRefreshAll,
@@ -34,7 +36,7 @@ export const TopNavigation: React.FC<TopNavigationProps> = ({
           onClick={() => setActiveTab('arrivals')}
           className="text-lg font-bold tracking-tight text-slate-900 dark:text-white whitespace-nowrap hover:opacity-85 transition-opacity text-left"
         >
-          SG Transit 04121
+          SG Transit · Stop {currentStopCode}
         </button>
       </div>
 

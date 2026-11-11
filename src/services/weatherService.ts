@@ -1,4 +1,4 @@
-import { WeatherData } from '../types/transit';
+import { BusStopInfo, WeatherData } from '../types/transit';
 
 const WMO_CODE_MAP: Record<number, { text: string; icon: string }> = {
   0: { text: 'Clear Sky', icon: 'Sun' },
@@ -21,8 +21,16 @@ const WMO_CODE_MAP: Record<number, { text: string; icon: string }> = {
   99: { text: 'Severe Thunderstorm', icon: 'CloudLightning' },
 };
 
-export async function fetchCivicDistrictWeather(customUrl?: string): Promise<WeatherData> {
-  const defaultLocationName = 'Singapore Civic District (Stop 04121)';
+export async function fetchCivicDistrictWeather(
+  busStop?: BusStopInfo,
+  customUrl?: string
+): Promise<WeatherData> {
+  const stopCode = busStop?.BusStopCode || '04179';
+  const stopDesc = busStop?.Description || 'Aft City Hall Stn Exit B';
+  const lat = busStop?.Latitude ?? 1.2925;
+  const lon = busStop?.Longitude ?? 103.8518;
+  const sector = busStop?.Sector || 'City';
+  const defaultLocationName = `${stopDesc} · Stop ${stopCode}`;
 
   // 1. If user provided an explicit custom weather API endpoint
   if (customUrl && customUrl.trim().length > 0) {
@@ -39,7 +47,16 @@ export async function fetchCivicDistrictWeather(customUrl?: string): Promise<Wea
 
   // 2. Primary: Fetch from local serverless /api/weather endpoint (backed by live data.gov.sg)
   try {
-    const res = await fetch('/api/weather', {
+    const params = new URLSearchParams({
+      busStopCode: stopCode,
+      description: stopDesc,
+      roadName: busStop?.RoadName || 'North Bridge Rd',
+      lat: String(lat),
+      lon: String(lon),
+      sector: sector,
+    });
+
+    const res = await fetch(`/api/weather?${params.toString()}`, {
       headers: { 'Accept': 'application/json' },
       signal: AbortSignal.timeout(5000),
     });
@@ -75,10 +92,9 @@ export async function fetchCivicDistrictWeather(customUrl?: string): Promise<Wea
     console.warn('Local /api/weather unavailable or timed out, trying Open-Meteo fallback:', err);
   }
 
-  // 3. Secondary Fallback: Live Open-Meteo fetch for 1.2902 N, 103.8502 E (Stop 04121 Opp The Treasury)
+  // 3. Secondary Fallback: Live Open-Meteo fetch for stop coordinates
   try {
-    const url =
-      'https://api.open-meteo.com/v1/forecast?latitude=1.2902&longitude=103.8502&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability,weather_code&timezone=Asia%2FSingapore&forecast_days=1';
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability,weather_code&timezone=Asia%2FSingapore&forecast_days=1`;
 
     const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!response.ok) throw new Error(`Weather fetch failed: ${response.status}`);
@@ -127,7 +143,7 @@ export async function fetchCivicDistrictWeather(customUrl?: string): Promise<Wea
     };
   } catch (err) {
     console.warn('Using Singapore fallback weather data due to network error:', err);
-    return getFallbackWeatherData();
+    return getFallbackWeatherData(stopDesc, stopCode);
   }
 }
 
@@ -163,7 +179,7 @@ function getFallbackHourlyForecast(baseTemp: number = 31, condition: string = 'P
   ];
 }
 
-function getFallbackWeatherData(): WeatherData {
+function getFallbackWeatherData(description: string = 'Aft City Hall Stn Exit B', code: string = '04179'): WeatherData {
   return {
     temperature: 31.2,
     apparentTemperature: 34.5,
@@ -173,7 +189,7 @@ function getFallbackWeatherData(): WeatherData {
     windSpeed: 12,
     weatherCode: 2,
     conditionText: 'Partly Cloudy (Day)',
-    locationName: 'Singapore Civic District (Stop 04121)',
+    locationName: `${description} · Stop ${code}`,
     lastUpdated: new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' }),
     source: 'data.gov.sg (Official Singapore Govt Real-Time NEA)',
     temperatureStation: { id: 'S111', name: 'Scotts Road' },
